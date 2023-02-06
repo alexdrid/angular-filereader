@@ -1,83 +1,65 @@
 /// <reference lib="webworker" />
 
+let headers: string[] = [];
+const values: string[][] = [];
+
+let brokenLine = '';
+let tempLine = '';
+
 addEventListener('message', ({ data }) => {
-  let fileStream = (<File>data).stream()
-  let reader = fileStream.getReader()
-  processFile(reader)
-  // postMessage(response);
+  readFile(data as File);
 });
 
-// addEventListener('ended', ())
+const readFile = async (file: File) => {
+  const fileStream = (file).stream();
+  const readerResult = fileStream.getReader();
 
-let csvData: string = '';
-let rowCount: number = 0;
-let headers: string[] = [];
-let data: string[][] = [];
+  let exhausted = false;
 
-const processFile = async (reader: ReadableStreamDefaultReader<Uint8Array>)  => {
-  
 
-  let result = await reader.read()
-    let chunk = new TextDecoder('utf-8').decode(
-      result.value || new Uint8Array(),
-    )
-    let lines = chunk.split('\n')
+  while (!exhausted) {
+    const { value, done } = await readerResult.read();
 
-    for (let i = 0; i < lines.length - 1; i++) {
-      csvData += lines[i]
-      let line = csvData.trim()
-      if (line.endsWith(',')) {
-        csvData += '\n'
-        continue
+    const chunk = new TextDecoder('utf-8').decode(
+      value || new Uint8Array(),
+    );
+
+    const lines = chunk.split('\n');
+
+    lines.forEach((line) => {
+      // const data = brokenLine ? brokenLine + line : line
+      if (brokenLine) {
+        tempLine = brokenLine + line
+        brokenLine = ''
+        processLine(tempLine.trim());
+      } else {
+        processLine(line.trim());
       }
+    })
 
-      processLine(line)
-      csvData = ''
-    }
+    exhausted = done;
+  }
 
-    csvData += lines[lines.length - 1]
-
-
-    if (!result.done) {
-      processFile(reader)
-    } else {
-      const result = {
-        headers: headers,
-        values: data
-      }
-      // console.log(`Finished processing file. Found ${rowCount} rows`)
-      postMessage(result)
-    }
-}
+  postMessage({
+    headers: headers,
+    values: values
+  });
+};
 
 const processLine = (line: string) => {
-  rowCount++
+  const reg = /,(?=(?:(?:[^"]*"){2})*[^"]*$)/;
+
+  const tempFields = line.split(reg).map((s: string) => s.replace(/['"]+/g, '').trim());
+
   if (!(headers.length > 0)) {
-    headers = line
-      .replace(/^"|"$/g, '')
-      .replace(/^\n|\n$/g, '')
-      .split(',')
-
-    return
+    headers = tempFields
+    return;
   }
 
-  const regex = /(?!\s*$)\s*(?:'([^'\\]*(?:\\[\S\s][^'\\]*)*)'|"([^"\\]*(?:\\[\S\s][^"\\]*)*)"|([^,'"\s\\]*(?:\s+[^,'"\s\\]+)*))\s*(?:,|$)/g
-  const values = []
-  let match
-
-  while ((match = regex.exec(line))) {
-    let value = match[2] || match[1] || match[3]
-    value = value.replace(/^"|"$/g, '').replace(/^'|'$/g, '')
-    values.push(value)
+  if (headers.length !== tempFields.length) {
+    brokenLine = line
+  } else {
+    values.push(tempFields);
   }
 
-  if (headers.length !== values.length) {
-    console.log(
-      `Line has ${values.length} values, expected ${headers.length}`,
-    )
-    return
-  }
-
-  data.push(values)
-
-}
+};
